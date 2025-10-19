@@ -1,4 +1,5 @@
 
+
 declare const maplibregl: any;
 
 // --- CONSTANTS ---
@@ -14,7 +15,8 @@ type Mode = 'none' | 'draw-track' | 'place-station' | 'delete' | 'set-origin' | 
 type LeftPanelMode = 'construction' | 'journey-planner' | 'route-details' | 'demand-details';
 type TrackCount = 'single' | 'parallel' | 'quad';
 type BuildMethod = 'cut-and-cover' | 'tbm';
-type JourneyLeg = { lineId: string | number; fromStationId: string | number; toStationId: string | number; rideTime: number };
+// FIX: Added `coords` to JourneyLeg to match the data structure sent from the worker and used for animation.
+type JourneyLeg = { lineId: string | number; fromStationId: string | number; toStationId: string | number; rideTime: number; coords: number[][] };
 type JourneyRoute = { legs: JourneyLeg[]; totalTime: number; waitTime: number; rideTime: number; };
 
 type Feature<T> = { type: 'Feature'; geometry: T; properties: any; id?: number | string };
@@ -37,8 +39,8 @@ let elevation = 0; // meters
 let buildMethod: BuildMethod = 'cut-and-cover';
 
 // Data State
-const lines: FeatureCollection<LineString> = { type: 'FeatureCollection', features: [] };
-const stations: FeatureCollection<Point> = { type: 'FeatureCollection', features: [] };
+let lines: FeatureCollection<LineString> = { type: 'FeatureCollection', features: [] };
+let stations: FeatureCollection<Point> = { type: 'FeatureCollection', features: [] };
 const trains: FeatureCollection<Point> = { type: 'FeatureCollection', features: [] };
 let stationRidership: { [key: string]: number } = {};
 let lineRidership: { [key: string]: number } = {};
@@ -49,6 +51,8 @@ let hoveredStationId: string | null = null;
 let lastStationQueues: { [key: string]: number } = {};
 let selectedLineId: number | string | null = null;
 let selectedDemandPointCoords: number[] | null = null;
+let journeyAnimationId: number;
+
 
 // Journey Planner State
 let journeyOrigin: Point | null = null;
@@ -64,11 +68,10 @@ let drawingControls: HTMLDivElement;
 let tracksToggle: HTMLInputElement, stationsToggle: HTMLInputElement, trainsToggle: HTMLInputElement, depthToggle: HTMLInputElement, demandToggle: HTMLInputElement;
 let costDisplay: HTMLSpanElement;
 let playBtn: HTMLButtonElement, pauseBtn: HTMLButtonElement;
-let apiConfigModal: HTMLDivElement;
+let apiConfigModal: HTMLDivElement, aboutModal: HTMLDivElement;
 let trainsCountDisplay: HTMLSpanElement;
 let timeDisplay: HTMLSpanElement;
-let ridershipDisplay: HTMLSpanElement;
-let budgetDisplay: HTMLSpanElement, cashflowDisplay: HTMLSpanElement, waitTimeDisplay: HTMLSpanElement;
+let ridershipDisplay: HTMLSpanElement, budgetDisplay: HTMLSpanElement, cashflowDisplay: HTMLSpanElement, waitTimeDisplay: HTMLSpanElement;
 let constructionPanel: HTMLDivElement, journeyPlannerPanel: HTMLDivElement, routeDetailsPanel: HTMLDivElement, demandDetailsPanel: HTMLDivElement;
 let constructionBtn: HTMLButtonElement, plannerBtn: HTMLButtonElement, analyticsBtn: HTMLButtonElement;
 
@@ -155,11 +158,13 @@ function updateDrawingUIState() {
 // --- UI EVENT HANDLERS ---
 
 function setLeftPanelMode(newMode: LeftPanelMode) {
+    if (leftPanelMode === newMode && (newMode === 'route-details' || newMode === 'demand-details')) return;
     leftPanelMode = newMode;
-    constructionPanel.style.display = leftPanelMode === 'construction' ? 'block' : 'none';
-    journeyPlannerPanel.style.display = leftPanelMode === 'journey-planner' ? 'block' : 'none';
-    routeDetailsPanel.style.display = leftPanelMode === 'route-details' ? 'block' : 'none';
-    demandDetailsPanel.style.display = leftPanelMode === 'demand-details' ? 'block' : 'none';
+    
+    constructionPanel.classList.toggle('active', leftPanelMode === 'construction');
+    journeyPlannerPanel.classList.toggle('active', leftPanelMode === 'journey-planner');
+    routeDetailsPanel.classList.toggle('active', leftPanelMode === 'route-details');
+    demandDetailsPanel.classList.toggle('active', leftPanelMode === 'demand-details');
 
     constructionBtn.classList.toggle('active', leftPanelMode === 'construction');
     plannerBtn.classList.toggle('active', leftPanelMode === 'journey-planner');
@@ -285,6 +290,7 @@ function setPlaying(play: boolean) {
 // --- ANALYTICS & JOURNEY PLANNER ---
 
 function setSelectedLine(lineId: number | string | null) {
+    if (!map) return;
     if (selectedLineId) {
         map.setFeatureState({ source: 'lines', id: selectedLineId }, { selected: false });
     }
@@ -302,6 +308,7 @@ function clearJourney() {
     journeyOrigin = null;
     journeyDestination = null;
     journeyResult = null;
+    cancelAnimationFrame(journeyAnimationId);
     updateDataSource('journey-points', { type: 'FeatureCollection', features: [] });
     updateDataSource('journey-route', { type: 'FeatureCollection', features: [] });
     renderJourneyPlannerPanel();
@@ -318,6 +325,38 @@ function planJourney() {
         }
     });
 }
+
+function animateRouteDrawing(fullCoordinates: number[][]) {
+    cancelAnimationFrame(journeyAnimationId);
+    const startTime = performance.now();
+    const duration = 600; // ms
+    const totalPoints = fullCoordinates.length;
+
+    const draw = (currentTime: number) => {
+        const elapsedTime = currentTime - startTime;
+        const progress = Math.min(elapsedTime / duration, 1);
+        const pointsToShow = Math.ceil(totalPoints * progress);
+        const currentCoords = fullCoordinates.slice(0, pointsToShow);
+        
+        // Ensure line has at least two points to be valid
+        if (currentCoords.length < 2 && fullCoordinates.length >= 2) {
+             currentCoords.push(fullCoordinates[1]);
+        }
+        
+        if (currentCoords.length >= 2) {
+            updateDataSource('journey-route', {
+                type: 'FeatureCollection',
+                features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: currentCoords } }]
+            });
+        }
+
+        if (progress < 1) {
+            journeyAnimationId = requestAnimationFrame(draw);
+        }
+    };
+    journeyAnimationId = requestAnimationFrame(draw);
+}
+
 
 // --- MAP EVENT HANDLERS ---
 function onMapMouseMove(e: any) {
@@ -381,7 +420,7 @@ function onMapClick(e: any) {
         return;
     }
 
-    if (leftPanelMode === 'route-details' || leftPanelMode === 'demand-details') {
+    if (leftPanelMode === 'route-details' || leftPanelMode === 'demand-details' || analyticsBtn.classList.contains('active')) {
         const lineFeatures = map.queryRenderedFeatures(e.point, { layers: ['lines-main'] });
         if (lineFeatures.length > 0) {
             setLeftPanelMode('route-details');
@@ -474,6 +513,13 @@ function hideApiConfigPanel() {
     apiConfigModal.style.display = 'none';
 }
 
+function showAboutPanel() {
+    aboutModal.style.display = 'flex';
+}
+function hideAboutPanel() {
+    aboutModal.style.display = 'none';
+}
+
 function createApiConfigPanel() {
     apiConfigModal = document.createElement('div');
     apiConfigModal.className = 'modal-backdrop';
@@ -482,6 +528,7 @@ function createApiConfigPanel() {
     apiConfigModal.innerHTML = `
         <div class="panel modal-content">
             <h3>🔑 Map API Configuration</h3>
+            <p class="modal-description">Provide a MapLibre-compatible style URL and an optional access token for high-detail map tiles.</p>
             <label for="style-url-input">Map Style URL</label>
             <input type="text" id="style-url-input" placeholder="e.g., mapbox://styles/mapbox/dark-v11">
             <label for="access-token-input">Access Token (optional)</label>
@@ -500,6 +547,39 @@ function createApiConfigPanel() {
     apiConfigModal.onclick = (e) => {
         if (e.target === apiConfigModal) {
             hideApiConfigPanel();
+        }
+    };
+}
+
+function createAboutPanel() {
+    aboutModal = document.createElement('div');
+    aboutModal.className = 'modal-backdrop';
+    aboutModal.style.display = 'none';
+    
+    aboutModal.innerHTML = `
+        <div class="panel modal-content">
+            <h3>ℹ️ About Subway Builder</h3>
+            <p class="modal-description">A transit network simulation game created with TypeScript, MapLibre GL JS, and a Web Worker for the simulation logic.</p>
+            <h4>Data Sources</h4>
+            <ul class="modal-list">
+                <li>Map Tiles: Provided by user or fallback to OpenStreetMap.</li>
+                <li>Demand Data: Procedurally generated for simulation purposes.</li>
+            </ul>
+            <h4>Libraries</h4>
+            <ul class="modal-list">
+                <li>MapLibre GL JS - <a href="https://maplibre.org/" target="_blank">maplibre.org</a></li>
+            </ul>
+            <div class="modal-actions">
+                <button id="close-about-panel" class="primary">Close</button>
+            </div>
+        </div>
+    `;
+
+    uiContainer.appendChild(aboutModal);
+    document.getElementById('close-about-panel').onclick = hideAboutPanel;
+    aboutModal.onclick = (e) => {
+        if (e.target === aboutModal) {
+            hideAboutPanel();
         }
     };
 }
@@ -528,7 +608,7 @@ function showBanner(message: string, id: string, className: string, timeout: num
 }
 
 function showErrorBanner(message: string) {
-    showBanner(`⚠️ ${message}`, 'error-banner', 'error-banner');
+    showBanner(`⚠️ ${message}`, 'error-banner', 'error-banner', 10000);
 }
 
 function handleIncidentEvent(payload: { id: number; active: boolean; message: string; }) {
@@ -567,8 +647,73 @@ function updateApiBanner() {
     }
 }
 
+// --- SCENARIO MANAGEMENT ---
+function handleExportScenario() {
+    const scenario = {
+        lines: lines.features,
+        stations: stations.features,
+    };
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(scenario, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", "subway_scenario.json");
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+}
+
+function handleImportScenario() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (e) => {
+        const file = (e.target as HTMLInputElement).files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const scenario = JSON.parse(event.target.result as string);
+                if (!scenario.lines || !scenario.stations || !Array.isArray(scenario.lines) || !Array.isArray(scenario.stations)) {
+                    throw new Error("Invalid scenario file structure.");
+                }
+                loadScenario(scenario);
+            } catch (error) {
+                showErrorBanner(`Failed to import scenario: ${error.message}`);
+                console.error("Import error:", error);
+            }
+        };
+        reader.readAsText(file);
+    };
+    input.click();
+}
+
+function loadScenario(scenario: { lines: Feature<LineString>[], stations: Feature<Point>[] }) {
+    // Clear existing network
+    lines.features = [];
+    stations.features = [];
+
+    // Load new data
+    lines.features = scenario.lines;
+    stations.features = scenario.stations;
+    
+    // Reset IDs to avoid collisions
+    const maxLineId = Math.max(0, ...lines.features.map(f => typeof f.id === 'number' ? f.id : 0));
+    const maxStationId = Math.max(0, ...stations.features.map(f => typeof f.id === 'number' ? f.id : 0));
+    nextLineId = maxLineId + 1;
+    nextStationId = maxStationId + 1;
+    
+    // Update map and simulation
+    updateDataSource('lines', lines);
+    updateDataSource('stations', stations);
+    updateSimulationNetwork();
+
+    showBanner('✅ Scenario loaded successfully.', 'import-success-banner', 'api-banner', 5000);
+}
+
+
 // --- UI RENDERING ---
 function renderRouteDetailsPanel() {
+    const container = routeDetailsPanel;
     if (!selectedLineId) return;
     const line = lines.features.find(f => f.id === selectedLineId);
     if (!line) return;
@@ -587,7 +732,7 @@ function renderRouteDetailsPanel() {
         </div>
     `).join('');
 
-    routeDetailsPanel.innerHTML = `
+    container.innerHTML = `
         <h3>Route Details</h3>
         <div class="list-container">${stationsHtml}</div>
         <div class="list-item total">
@@ -609,6 +754,7 @@ function renderRouteDetailsPanel() {
 }
 
 function renderDemandDetailsPanel(details: any) {
+    const container = demandDetailsPanel;
     const { demandPoint, nearbyStations, hourlyDistribution } = details;
     const totalWorkers = 4215 + 18721 + 1842; // Hardcoded from screenshot for visual consistency
     
@@ -632,7 +778,7 @@ function renderDemandDetailsPanel(details: any) {
         `;
     };
 
-    demandDetailsPanel.innerHTML = `
+    container.innerHTML = `
         <h3>Demand Point Details</h3>
         <h4>Worker Mode Share</h4>
         <div class="mode-share-bar">
@@ -653,6 +799,7 @@ function renderDemandDetailsPanel(details: any) {
 }
 
 function renderJourneyPlannerPanel() {
+    const container = journeyPlannerPanel;
     const originText = journeyOrigin ? `Set from map` : 'Set on map';
     const destText = journeyDestination ? `Set from map` : 'Set on map';
     let resultHtml = '<div class="placeholder">Set origin and destination to plan a journey.</div>';
@@ -676,7 +823,7 @@ function renderJourneyPlannerPanel() {
         `;
     }
 
-    journeyPlannerPanel.innerHTML = `
+    container.innerHTML = `
         <h3>🧭 Journey Planner</h3>
         <div class="journey-leg">
             <span class="leg-icon origin"></span>
@@ -710,6 +857,7 @@ function renderUI() {
     // Construction Panel
     constructionPanel = document.createElement('div');
     constructionPanel.id = 'construction-panel';
+    constructionPanel.className = 'panel-content';
     leftPanelContainer.appendChild(constructionPanel);
     
     constructionPanel.innerHTML = `<h3>🏗️ Construction</h3>`;
@@ -804,10 +952,30 @@ function renderUI() {
         buildMethodContainer.appendChild(label);
     });
 
+    // Scenario Management section
+    const scenarioManagement = document.createElement('div');
+    scenarioManagement.className = 'scenario-management';
+    scenarioManagement.innerHTML = `
+      <h4>Scenario</h4>
+      <div class="tool-grid">
+        <button id="import-btn">📥 Import</button>
+        <button id="export-btn">📤 Export</button>
+      </div>
+    `;
+    constructionPanel.appendChild(scenarioManagement);
+    document.getElementById('import-btn').onclick = handleImportScenario;
+    document.getElementById('export-btn').onclick = handleExportScenario;
+
     // Other Left Panels
     journeyPlannerPanel = document.createElement('div');
+    journeyPlannerPanel.id = 'journey-planner-panel';
+    journeyPlannerPanel.className = 'panel-content';
     routeDetailsPanel = document.createElement('div');
+    routeDetailsPanel.id = 'route-details-panel';
+    routeDetailsPanel.className = 'panel-content';
     demandDetailsPanel = document.createElement('div');
+    demandDetailsPanel.id = 'demand-details-panel';
+    demandDetailsPanel.className = 'panel-content';
     leftPanelContainer.appendChild(journeyPlannerPanel);
     leftPanelContainer.appendChild(routeDetailsPanel);
     leftPanelContainer.appendChild(demandDetailsPanel);
@@ -816,13 +984,25 @@ function renderUI() {
     // Right Panel
     const rightPanel = document.createElement('div');
     rightPanel.className = 'panel right-panel';
-    const rightPanelHeader = document.createElement('h3');
-    rightPanelHeader.innerHTML = `🗺️ Layers`;
+    const rightPanelHeader = document.createElement('div');
+    rightPanelHeader.className = 'panel-header';
+    rightPanelHeader.innerHTML = `<h3>🗺️ Layers</h3>`;
+    const headerButtons = document.createElement('div');
+    headerButtons.className = 'header-buttons';
+
+    const aboutBtn = document.createElement('button');
+    aboutBtn.className = 'icon-btn';
+    aboutBtn.innerHTML = 'ℹ️';
+    aboutBtn.onclick = showAboutPanel;
+    headerButtons.appendChild(aboutBtn);
+
     const settingsBtn = document.createElement('button');
-    settingsBtn.className = 'settings-btn';
+    settingsBtn.className = 'icon-btn';
     settingsBtn.innerHTML = '⚙️';
     settingsBtn.onclick = showApiConfigPanel;
-    rightPanelHeader.appendChild(settingsBtn);
+    headerButtons.appendChild(settingsBtn);
+
+    rightPanelHeader.appendChild(headerButtons);
     rightPanel.appendChild(rightPanelHeader);
     uiContainer.appendChild(rightPanel);
     
@@ -845,7 +1025,7 @@ function renderUI() {
     tracksToggle = createToggle('Tracks', true, handleLayerToggle);
     stationsToggle = createToggle('Stations', true, handleLayerToggle);
     trainsToggle = createToggle('Trains', true, handleLayerToggle);
-    depthToggle = createToggle('Depth Overlay', false, handleLayerToggle);
+    depthToggle = createToggle('Cost/Depth View', false, handleLayerToggle);
     demandToggle = createToggle('Demand', false, handleLayerToggle);
 
     // Bottom Left Toolbar
@@ -873,11 +1053,11 @@ function renderUI() {
     const hud = document.createElement('div');
     hud.className = 'hud';
     hud.innerHTML = `
-        <span id="budget-display">💰 $5.00B</span>
-        <span id="cashflow-display">📈 +$0/hr</span>
-        <span id="ridership-display">👥 0</span>
-        <span id="wait-time-display">⏳ 0s</span>
-        <span>🚄 <span id="trains-count">0</span></span>
+        <span id="budget-display">💰<span class="value">$5.00B</span></span>
+        <span id="cashflow-display">📈<span class="value">+$0/hr</span></span>
+        <span id="ridership-display">👥<span class="value">0</span></span>
+        <span id="wait-time-display">⏳<span class="value">0s</span></span>
+        <span>🚄<span class="value" id="trains-count">0</span></span>
         <span id="time-display">⏱️ Day 1, 00:00</span>
         <div class="play-controls">
             <button id="play-btn">▶️</button>
@@ -889,15 +1069,16 @@ function renderUI() {
     pauseBtn = document.getElementById('pause-btn') as HTMLButtonElement;
     trainsCountDisplay = document.getElementById('trains-count') as HTMLSpanElement;
     timeDisplay = document.getElementById('time-display') as HTMLSpanElement;
-    ridershipDisplay = document.getElementById('ridership-display') as HTMLSpanElement;
-    budgetDisplay = document.getElementById('budget-display') as HTMLSpanElement;
-    cashflowDisplay = document.getElementById('cashflow-display') as HTMLSpanElement;
-    waitTimeDisplay = document.getElementById('wait-time-display') as HTMLSpanElement;
+    ridershipDisplay = hud.querySelector('#ridership-display .value') as HTMLSpanElement;
+    budgetDisplay = hud.querySelector('#budget-display .value') as HTMLSpanElement;
+    cashflowDisplay = hud.querySelector('#cashflow-display .value') as HTMLSpanElement;
+    waitTimeDisplay = hud.querySelector('#wait-time-display .value') as HTMLSpanElement;
 
     playBtn.onclick = () => setPlaying(true);
     pauseBtn.onclick = () => setPlaying(false);
 
     createApiConfigPanel();
+    createAboutPanel();
     updateApiBanner();
     setLeftPanelMode('construction'); // Set initial panel
     renderJourneyPlannerPanel(); // Initial render
@@ -1093,7 +1274,7 @@ async function initMap() {
 }
 
 function initSimulationWorker() {
-    simulationWorker = new Worker(new URL('./simulation.worker.ts', import.meta.url), { type: 'module' });
+    simulationWorker = new Worker('./simulation.worker.ts', { type: 'module' });
 
     simulationWorker.onmessage = (e) => {
         const { type, payload } = e.data;
@@ -1108,10 +1289,10 @@ function initSimulationWorker() {
             const minute = Math.floor((simTime % 3600) / 60);
             timeDisplay.textContent = `⏱️ Day ${day}, ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
             
-            ridershipDisplay.textContent = `👥 ${formatNumber(totalRidership)}`;
-            budgetDisplay.textContent = `💰 ${formatCurrency(budget)}`;
-            cashflowDisplay.textContent = `📈 ${formatCashflow(cashflowPerHour)}`;
-            waitTimeDisplay.textContent = `⏳ ${Math.round(avgWaitTime)}s`;
+            ridershipDisplay.textContent = `${formatNumber(totalRidership)}`;
+            budgetDisplay.textContent = `${formatCurrency(budget)}`;
+            cashflowDisplay.textContent = `${formatCashflow(cashflowPerHour)}`;
+            waitTimeDisplay.textContent = `${Math.round(avgWaitTime)}s`;
 
             stationRidership = dailyStationRidership;
             lineRidership = dailyLineRidership;
@@ -1133,14 +1314,9 @@ function initSimulationWorker() {
             journeyResult = payload;
             renderJourneyPlannerPanel();
             if (payload.route) {
-                const routeLine = {
-                    type: 'Feature',
-                    geometry: {
-                        type: 'LineString',
-                        coordinates: payload.route.legs.flatMap((leg: any) => leg.coords)
-                    }
-                };
-                updateDataSource('journey-route', { type: 'FeatureCollection', features: [routeLine] });
+                // FIX: Use the strongly-typed JourneyLeg to access coords, removing the need for `any`.
+                const allCoords = payload.route.legs.flatMap((leg: JourneyLeg) => leg.coords);
+                animateRouteDrawing(allCoords);
             }
         } else if (type === 'DEMAND_DETAILS_RESULT') {
             renderDemandDetailsPanel(payload);
@@ -1148,10 +1324,23 @@ function initSimulationWorker() {
     };
 }
 
+function registerServiceWorker() {
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js').then(registration => {
+                console.log('ServiceWorker registration successful with scope: ', registration.scope);
+            }, err => {
+                console.log('ServiceWorker registration failed: ', err);
+            });
+        });
+    }
+}
+
 async function main() {
     renderUI();
     initSimulationWorker();
     await initMap();
+    registerServiceWorker();
 }
 
 main();

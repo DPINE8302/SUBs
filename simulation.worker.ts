@@ -1,4 +1,5 @@
-
+// FIX: Wrap the entire worker in an IIFE to prevent global scope pollution and identifier conflicts.
+(() => {
 
 // --- TYPE DEFINITIONS ---
 type Point = { type: 'Point', coordinates: number[] };
@@ -752,3 +753,5 @@ function reconstructJourneyPath(cameFrom: Map<any, any>, currentId: any): Journe
         totalTime: rideTime + waitTime
     };
 }
+
+})();
