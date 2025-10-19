@@ -1,0 +1,94 @@
+{
+  "lines": {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "id": 1,
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [100.5312, 13.7658],
+            [100.5391, 13.7582],
+            [100.5458, 13.7522],
+            [100.5542, 13.7459],
+            [100.5617, 13.7394]
+          ]
+        },
+        "properties": {
+          "id": 1,
+          "name": "Silom Spine",
+          "color": "#007AFF",
+          "buildMethod": "cut-and-cover",
+          "trackCount": "single",
+          "elevation": -12,
+          "headway": 180
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 2,
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [100.5404, 13.7802],
+            [100.5468, 13.7715],
+            [100.5534, 13.7641],
+            [100.5605, 13.7564],
+            [100.5679, 13.7487]
+          ]
+        },
+        "properties": {
+          "id": 2,
+          "name": "Chao Phraya Loop",
+          "color": "#FF3B30",
+          "buildMethod": "tbm",
+          "trackCount": "parallel",
+          "elevation": -18,
+          "headway": 240
+        }
+      }
+    ]
+  },
+  "stations": {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "id": 101,
+        "geometry": { "type": "Point", "coordinates": [100.5312, 13.7658] },
+        "properties": { "id": 101, "name": "Phaya Thai", "cost": 25000000 }
+      },
+      {
+        "type": "Feature",
+        "id": 102,
+        "geometry": { "type": "Point", "coordinates": [100.5458, 13.7522] },
+        "properties": { "id": 102, "name": "Siam Central", "cost": 25000000 }
+      },
+      {
+        "type": "Feature",
+        "id": 103,
+        "geometry": { "type": "Point", "coordinates": [100.5617, 13.7394] },
+        "properties": { "id": 103, "name": "Lumphini East", "cost": 25000000 }
+      },
+      {
+        "type": "Feature",
+        "id": 201,
+        "geometry": { "type": "Point", "coordinates": [100.5404, 13.7802] },
+        "properties": { "id": 201, "name": "Din Daeng", "cost": 25000000 }
+      },
+      {
+        "type": "Feature",
+        "id": 202,
+        "geometry": { "type": "Point", "coordinates": [100.5534, 13.7641] },
+        "properties": { "id": 202, "name": "Victory Monument", "cost": 25000000 }
+      },
+      {
+        "type": "Feature",
+        "id": 203,
+        "geometry": { "type": "Point", "coordinates": [100.5679, 13.7487] },
+        "properties": { "id": 203, "name": "Asok Junction", "cost": 25000000 }
+      }
+    ]
+  }
+}
